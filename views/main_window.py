@@ -1,8 +1,12 @@
+import io
 import re
+import uuid
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import requests
+from PyQt6.QtCore import QRunnable, pyqtSlot, QThreadPool, QObject, pyqtSignal
 from PyQt6.QtGui import QUndoStack
 from PyQt6.QtWidgets import QMainWindow, QMenu, QMessageBox, QFileDialog
 
@@ -12,10 +16,16 @@ from table.model import TableModel, TableModel2
 from views.find_and_replace import FindReplaceWidget
 from views.rename_header import RenameHeaderDialog
 
+from PIL import Image
+import shortuuid
+import automations.search_for_image as sfi
+import automations.image_processing as imp
+
 
 class Window(QMainWindow, mwui.Ui_MainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.threadpool = QThreadPool()
         self.find_rep_widg = FindReplaceWidget(self)
         self.rename_header_dialog = RenameHeaderDialog(self)
         self.setupUi(self)
@@ -57,6 +67,7 @@ class Window(QMainWindow, mwui.Ui_MainWindow):
         self.refreshUniqueWordResultsBtn.clicked.connect(
             self.refresh_unique_words)
         self.actionRename_Header.triggered.connect(self.rename_header)
+        self.find_imgs_btn.clicked.connect(self.add_img_urls)
 
     def tableContextMenuEvent(self, pos):
         context = QMenu(self)
@@ -117,12 +128,9 @@ class Window(QMainWindow, mwui.Ui_MainWindow):
             self.actionFind_and_Replace.setEnabled(True)
             self.actionStandardise_Data.setEnabled(True)
             self.actionRename_Header.setEnabled(True)
-            self.description_combo.addItems(self.model.header)
-            self.category_combo.addItems(self.model.header)
-            self.sku_combo.addItems(self.model.header)
-            self.features_combo.addItems(self.model.header)
-            self.categoryComboUniqueWords.addItems(self.model.header)
             self.refreshUniqueWordResultsBtn.setEnabled(True)
+            self.find_imgs_btn.setEnabled(True)
+            self.update_column_combos()
 
         except Exception as e:
             raise e
@@ -285,29 +293,125 @@ class Window(QMainWindow, mwui.Ui_MainWindow):
                  :, self.categoryComboUniqueWords.currentIndex()]
 
         vmatch = np.vectorize(
-            lambda x: bool(re.search(r'[Α-Ωα-ωΆ-Ώά-ώ]|^(?![\s\S])', x)))
+            lambda x: bool(re.search(
+                r'[ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩαβγδεζηθικλμνξοπρστυφχψωςΆΈΊΪΌΎΫΏάέήϊΐόύϋΰώ]|^(?![\s\S])',
+                x)))
 
-        if self.findGreekCheck.isChecked() and not self.findLatinCheck.isChecked():
+        if self.findGreekCheck.isChecked():
             bool_table = vmatch(values)
             self.unique_words_model.items = np.unique(
                 values[bool_table]).reshape((-1, 1))
-        elif not self.findGreekCheck.isChecked() and self.findLatinCheck.isChecked():
-            bool_table = vmatch(values)
-            self.unique_words_model.items = np.unique(
-                values[~bool_table]).reshape((-1, 1))
-        elif self.findGreekCheck.isChecked() and self.findLatinCheck.isChecked():
-            self.unique_words_model.items = np.unique(values).reshape((-1, 1))
         else:
-            pass
+            self.unique_words_model.items = np.unique(values).reshape((-1, 1))
+
+    def update_column_combos(self):
+        self.imgs_combo.clear()
+        self.imgs_combo.addItems(self.model.header)
+
+        self.description_combo.clear()
+        self.description_combo.addItems(self.model.header)
+
+        self.category_combo.clear()
+        self.category_combo.addItems(self.model.header)
+
+        self.sku_combo.clear()
+        self.sku_combo.addItems(self.model.header)
+
+        self.features_combo.clear()
+        self.features_combo.addItems(self.model.header)
+
+        self.categoryComboUniqueWords.clear()
+        self.categoryComboUniqueWords.addItems(self.model.header)
+
+    def add_img_urls(self):
+        worker = AddImgUrlsWorker(self)
+        worker.signals.result.connect(self.worker_result)
+        worker.signals.start.connect(self.worker_start)
+        worker.signals.end.connect(self.worker_end)
+        worker.signals.progress.connect(self.update_progress)
+        worker.signals.error.connect(self.worker_error)
+
+        self.threadpool.start(worker)
+
+    def worker_result(self, result):
+        idx = self.model.createIndex(
+            result["row"], result["col"])
+        img_name = shortuuid.uuid() + '.jpeg'
+
+        img = result["img"]
+        if img:
+            img.save(Path(self.fp).parent.joinpath(img_name), 'jpeg')
+            self.model.edit_item(idx, img_name)
+        else:
+            self.model.edit_item(idx, '')
+
+    def worker_start(self):
+        self.find_imgs_btn.setEnabled(False)
+
+    def worker_end(self):
+        self.find_imgs_btn.setEnabled(True)
+
+    def worker_error(self, t):
+        print("ERROR: %s" % t)
+
+    def update_progress(self, progress):
+        self.progressBar.setValue(progress)
 
 
-'''
-    def refresh_unique_words(self):
-        vmatch = np.vectorize(
-            lambda x: bool(re.search('[Α-Ωα-ωΆ-Ώά-ώ]|^(?![\s\S])', x)))
-        values = self.model.items[:,
-                 self.categoryComboUniqueWords.currentIndex()]
-        bool_table = vmatch(values)
-        self.unique_words_model.items = np.unique(values[bool_table]).reshape(
-            (-1, 1))
-'''
+class AddImgUrlsWorker(QRunnable):
+    def __init__(self, parent):
+        super().__init__()
+        self.job_id = uuid.uuid4().hex
+        self.signals = AddImgUrlsWorkerSignals()
+        self.items = np.copy(parent.model.items)
+        self.imgs_combo_idx = parent.imgs_combo.currentIndex()
+        self.desc_combo_idx = parent.description_combo.currentIndex()
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            self.signals.start.emit()
+            total_n = self.items.shape[0]
+            for i, item in enumerate(self.items):
+                progress_pc = int(100 * float(i + 1) / total_n)
+                img_url = sfi.search(
+                    re.sub(r'\([^)]*\)', '', item[self.desc_combo_idx]))
+                img_url = re.split("\?", img_url)[0]
+                self.signals.progress.emit(progress_pc)
+
+                try:
+                    response = requests.get(img_url, stream=True)
+
+                    img = Image.open(response.raw)
+                    img = imp.resize(
+                        Image.fromarray(imp.crop_image(np.array(img), 250)),
+                        500, 500)
+
+                    self.signals.result.emit(
+                        {
+                            "img_url": img_url,
+                            "row": i,
+                            "col": self.imgs_combo_idx,
+                            "img": img
+                        }
+                    )
+                except Exception:
+                    self.signals.result.emit(
+                        {
+                            "img_url": img_url,
+                            "row": i,
+                            "col": self.imgs_combo_idx,
+                            "img": None
+                        }
+                    )
+            self.signals.end.emit()
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+
+class AddImgUrlsWorkerSignals(QObject):
+    start = pyqtSignal()
+    end = pyqtSignal()
+    result = pyqtSignal(dict)
+    progress = pyqtSignal(int)
+    error = pyqtSignal(str)

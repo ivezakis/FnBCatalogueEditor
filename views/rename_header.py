@@ -2,7 +2,6 @@ from PyQt6.QtWidgets import QDialog
 
 from views import rename_header_ui as rh
 
-
 class RenameHeaderDialog(QDialog, rh.Ui_Rename_header_dialog):
     def __init__(self, index, parent=None):
         super().__init__()
@@ -20,4 +19,5 @@ class RenameHeaderDialog(QDialog, rh.Ui_Rename_header_dialog):
     def accept(self):
         value = self.lineEdit.text()
         self.parent.model.rename_header(self.index, value)
+        self.parent.update_column_combos()
         self.close()

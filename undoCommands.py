@@ -110,8 +110,8 @@ class CommandStandardize(QUndoCommand):
 
 def titlecase(s):
     return re.sub(
-        r"(?<!\d)\b[A-Za-zΑ-Ωα-ωΆ-Ώά-ώ]+('[A-Za-zΑ-Ωα-ωΆ-Ώά-ώ]+)?",
+        r"(?<!\d)\b[A-Za-zΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩαβγδεζηθικλμνξοπρστυφχψωςΆΈΊΪΌΎΫΏάέήϊΐόύϋΰώ]+"
+        r"('[A-Za-zΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩαβγδεζηθικλμνξοπρστυφχψωςΆΈΊΪΌΎΫΏάέήϊΐόύϋΰώ]+)?",
         lambda word: word.group(0).capitalize(),
         s
     )
-
