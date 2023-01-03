@@ -1,6 +1,6 @@
 # FnB Catalogue Creator
 
-A side project for creating a lightweight, python-based CSV editor for editing huge CSV product catalogues with additional utilities for easily cleaning up data, fixing formatting of product titles, fast search and replace, auto finding of product pictures etc.
+A lightweight, python-based CSV editor for editing huge CSV product catalogues with additional utilities for easily cleaning up data, fixing formatting of product titles, fast search and replace, auto finding of product pictures etc.
 
 ## Attributions
 
